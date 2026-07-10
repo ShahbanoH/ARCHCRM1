@@ -21,6 +21,10 @@ of crashing — that's expected.
 
 ## Using it
 
+- **Import structure CSV** (sidebar) bulk-builds the whole tree from a master file with
+  `Record` (name), `Type` (PE firm / Platform / Brand), `LinkedIn`, `Domains`, `Sponsor`
+  (a platform's PE firm), and `Platform` (a brand's platform) columns. Re-importing the
+  same file is safe — existing companies are matched by name, never duplicated
 - **Add PE fund** (sidebar) → click a fund to open it
 - **+ Add platform** inside a fund, **+ Add brand** inside a platform
 - Click any name or field to edit — changes save automatically (indicator bottom-right)

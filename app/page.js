@@ -95,6 +95,36 @@ function mapApolloRows(rows) {
   });
 }
 
+// Maps a "master" structure CSV (Record/Name, Type, Sponsor, Platform,
+// LinkedIn, Domains/Website) into rows for /api/import.
+function mapStructureRows(rows) {
+  if (rows.length < 2) return null;
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (...names) => {
+    for (const n of names) {
+      const idx = headers.indexOf(n);
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  };
+  const name = col("record", "name", "company");
+  const type = col("type");
+  if (name === -1 || type === -1) return null;
+  const linkedin = col("linkedin", "linkedin url", "company linkedin url");
+  const website = col("domains", "website", "domain");
+  const sponsor = col("sponsor", "pe firm", "pe fund");
+  const platform = col("platform");
+  const pick = (r, i) => (i === -1 ? "" : (r[i] || "").trim());
+  return rows.slice(1).map((r) => ({
+    name: pick(r, name),
+    type: pick(r, type),
+    linkedin: pick(r, linkedin),
+    website: pick(r, website),
+    sponsor: pick(r, sponsor),
+    platform: pick(r, platform),
+  }));
+}
+
 /* ---------- Immutable tree helpers ---------- */
 
 function mapNode(node, id, fn) {
@@ -308,8 +338,9 @@ export default function Home() {
   const [dbMessage, setDbMessage] = useState(null);
   const [status, setStatus] = useState("");
   const pending = useRef(0);
+  const structureFileRef = useRef(null);
 
-  useEffect(() => {
+  const loadTree = () =>
     fetch("/api/tree")
       .then(async (res) => {
         const data = await res.json();
@@ -318,9 +349,14 @@ export default function Home() {
           return;
         }
         setFunds(data.funds);
-        if (data.funds.length > 0) setSelectedId(data.funds[0].id);
+        setSelectedId((sel) =>
+          data.funds.some((f) => f.id === sel) ? sel : data.funds[0]?.id ?? null
+        );
       })
       .catch(() => setDbMessage("Couldn't reach the server — try refreshing."));
+
+  useEffect(() => {
+    loadTree();
   }, []);
 
   const track = async (promise) => {
@@ -441,6 +477,35 @@ export default function Home() {
       } catch {}
     },
 
+    importStructure: async (file) => {
+      const text = await file.text();
+      const rows = mapStructureRows(parseCSV(text));
+      if (!rows) {
+        alert(
+          "This CSV needs at least a name column (Record / Name / Company) and a Type column (PE firm / Platform / Brand)."
+        );
+        return;
+      }
+      try {
+        const res = await track(
+          fetch("/api/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rows }),
+          })
+        );
+        const { created, updated, skipped } = await res.json();
+        await loadTree();
+        alert(
+          `Imported ${created.fund} funds, ${created.platform} platforms, ${created.brand} brands.` +
+            (updated ? ` Updated ${updated} existing.` : "") +
+            (skipped ? ` Skipped ${skipped} rows (missing name or type).` : "")
+        );
+      } catch {
+        alert("Import failed — check the file and try again.");
+      }
+    },
+
     deleteContact: async (entityId, contactId) => {
       try {
         await track(fetch(`/api/contacts?id=${contactId}`, { method: "DELETE" }));
@@ -496,6 +561,20 @@ export default function Home() {
           <button className="btn primary" onClick={() => api.addEntity("fund")}>
             + Add PE fund
           </button>
+          <button className="btn" onClick={() => structureFileRef.current?.click()}>
+            ⬆ Import structure CSV
+          </button>
+          <input
+            ref={structureFileRef}
+            type="file"
+            accept=".csv,text/csv"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) api.importStructure(file);
+            }}
+          />
           <a className="btn" href="/api/export" style={{ justifyContent: "center", textDecoration: "none" }}>
             ⬇ Export all (CSV)
           </a>
