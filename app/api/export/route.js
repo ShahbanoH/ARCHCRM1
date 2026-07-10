@@ -12,7 +12,7 @@ export async function GET() {
   try {
     const { rows } = await query(`
       SELECT
-        c.name, c.linkedin, c.email, c.phone, c.stage, c.response,
+        c.name, c.title, c.linkedin, c.email, c.phone, c.stage, c.response,
         e.kind AS level, e.name AS company,
         p.name AS parent_name, p.kind AS parent_kind,
         g.name AS grandparent_name
@@ -23,7 +23,7 @@ export async function GET() {
       ORDER BY COALESCE(g.id, p.id, e.id), e.id, c.id
     `);
 
-    const header = ["Fund", "Platform", "Brand", "Level", "Name", "LinkedIn", "Email", "Phone", "Stage", "Response"];
+    const header = ["Fund", "Platform", "Brand", "Level", "Name", "Role", "LinkedIn", "Email", "Phone", "Stage", "Response"];
     const lines = [header.join(",")];
     for (const r of rows) {
       let fund = "", platform = "", brand = "";
@@ -38,7 +38,7 @@ export async function GET() {
         fund = r.grandparent_name ?? "";
       }
       lines.push(
-        [fund, platform, brand, r.level, r.name, r.linkedin, r.email, r.phone, r.stage, r.response]
+        [fund, platform, brand, r.level, r.name, r.title, r.linkedin, r.email, r.phone, r.stage, r.response]
           .map(csvCell)
           .join(",")
       );

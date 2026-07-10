@@ -143,11 +143,12 @@ export async function POST(request) {
             continue;
           }
           await client.query(
-            `INSERT INTO contacts (entity_id, name, linkedin, email, phone, stage, response)
-             VALUES ($1, $2, $3, $4, $5, 1, '')`,
+            `INSERT INTO contacts (entity_id, name, title, linkedin, email, phone, stage, response)
+             VALUES ($1, $2, $3, $4, $5, $6, 1, '')`,
             [
               entity.id,
               (row.name || "").trim(),
+              (row.title || "").trim(),
               (row.linkedin || "").trim(),
               (row.email || "").trim(),
               (row.phone || "").trim(),

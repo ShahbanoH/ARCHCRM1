@@ -2,13 +2,14 @@ import { query, noDbResponse } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-const CONTACT_FIELDS = ["name", "linkedin", "email", "phone", "stage", "response"];
+const CONTACT_FIELDS = ["name", "title", "linkedin", "email", "phone", "stage", "response"];
 const RESPONSES = ["", "Yes", "No", "Follow up", "Wrong info"];
 
 function clean(contact) {
   const stage = Number(contact.stage);
   return {
     name: contact.name ?? "",
+    title: contact.title ?? "",
     linkedin: contact.linkedin ?? "",
     email: contact.email ?? "",
     phone: contact.phone ?? "",
@@ -27,12 +28,12 @@ export async function POST(request) {
     const values = [];
     const placeholders = contacts.map((raw, i) => {
       const c = clean(raw);
-      values.push(entityId, c.name, c.linkedin, c.email, c.phone, c.stage, c.response);
-      const base = i * 7;
-      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+      values.push(entityId, c.name, c.title, c.linkedin, c.email, c.phone, c.stage, c.response);
+      const base = i * 8;
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`;
     });
     const { rows } = await query(
-      `INSERT INTO contacts (entity_id, name, linkedin, email, phone, stage, response)
+      `INSERT INTO contacts (entity_id, name, title, linkedin, email, phone, stage, response)
        VALUES ${placeholders.join(", ")} RETURNING *`,
       values
     );

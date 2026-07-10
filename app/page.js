@@ -66,6 +66,7 @@ function mapApolloRows(rows) {
   const last = col("last name");
   const full = col("name", "full name", "contact name");
   const email = col("email", "email address", "work email");
+  const title = col("title", "job title", "role");
   const linkedin = col("person linkedin url", "linkedin url", "linkedin", "linkedin profile");
   const phones = [
     col("mobile phone"),
@@ -92,6 +93,7 @@ function mapApolloRows(rows) {
     }
     return {
       name,
+      title: title !== -1 ? (r[title] || "").trim() : "",
       linkedin: linkedin !== -1 ? (r[linkedin] || "").trim() : "",
       email: email !== -1 ? (r[email] || "").trim() : "",
       phone,
@@ -173,6 +175,7 @@ function mapApolloPeople(rows) {
     name:
       col.pick(r, "name", "full name") ||
       [col.pick(r, "first name"), col.pick(r, "last name")].filter(Boolean).join(" "),
+    title: col.pick(r, "title", "job title", "role"),
     linkedin: col.pick(r, "person linkedin url", "linkedin url", "linkedin"),
     email: col.pick(r, "email", "email address", "work email", "secondary email"),
     phone: cleanPhone(
@@ -210,6 +213,41 @@ function dropNode(node, id) {
 
 /* ---------- Small pieces ---------- */
 
+function hrefFor(kind, value) {
+  const v = (value || "").trim();
+  if (!v) return null;
+  if (kind === "url") return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  if (kind === "email") return `mailto:${v}`;
+  if (kind === "tel") return `tel:${v.replace(/[^+\d]/g, "")}`;
+  return null;
+}
+
+// An editable field with a small ↗ that opens the value as a link.
+function LinkableInput({ linkKind, value, ...props }) {
+  const href = linkKind ? hrefFor(linkKind, value) : null;
+  return (
+    <div className="linkable">
+      <input value={value} {...props} />
+      {href && (
+        <a
+          className="goto"
+          href={href}
+          target={linkKind === "url" ? "_blank" : undefined}
+          rel="noreferrer"
+          tabIndex={-1}
+          title={`Open ${value}`}
+        >
+          ↗
+        </a>
+      )}
+    </div>
+  );
+}
+
+function countContacts(node) {
+  return node.contacts.length + node.children.reduce((sum, c) => sum + countContacts(c), 0);
+}
+
 function stageClass(stage) {
   return `stage-${Math.min(5, Math.max(1, Number(stage) || 1))}`;
 }
@@ -236,7 +274,8 @@ function InfoBar({ entity, onEdit, onSave }) {
       {fields.map(([key, label]) => (
         <div className="info-field" key={key}>
           <label>{label}</label>
-          <input
+          <LinkableInput
+            linkKind={key === "linkedin" || key === "website" ? "url" : null}
             value={entity[key] || ""}
             placeholder={label}
             onChange={(e) => onEdit({ [key]: e.target.value })}
@@ -270,10 +309,11 @@ function ContactsTable({ entity, api }) {
         <table>
           <thead>
             <tr>
-              <th style={{ width: "18%" }}>Name</th>
-              <th style={{ width: "20%" }}>LinkedIn</th>
-              <th style={{ width: "20%" }}>Email</th>
-              <th style={{ width: "14%" }}>Phone</th>
+              <th style={{ width: "15%" }}>Name</th>
+              <th style={{ width: "15%" }}>Role</th>
+              <th style={{ width: "17%" }}>LinkedIn</th>
+              <th style={{ width: "17%" }}>Email</th>
+              <th style={{ width: "12%" }}>Phone</th>
               <th>Stage</th>
               <th>Response</th>
               <th style={{ width: 36 }}></th>
@@ -282,16 +322,23 @@ function ContactsTable({ entity, api }) {
           <tbody>
             {entity.contacts.length === 0 && (
               <tr>
-                <td className="empty-row" colSpan={7}>
+                <td className="empty-row" colSpan={8}>
                   No contacts yet — add one or upload an Apollo CSV.
                 </td>
               </tr>
             )}
             {entity.contacts.map((c) => (
               <tr key={c.id}>
-                {["name", "linkedin", "email", "phone"].map((key) => (
+                {[
+                  ["name", null],
+                  ["title", null],
+                  ["linkedin", "url"],
+                  ["email", "email"],
+                  ["phone", "tel"],
+                ].map(([key, linkKind]) => (
                   <td key={key}>
-                    <input
+                    <LinkableInput
+                      linkKind={linkKind}
                       value={c[key] || ""}
                       onChange={(e) => api.editContact(entity.id, c.id, { [key]: e.target.value })}
                       onBlur={(e) => api.saveContact(c.id, { [key]: e.target.value })}
@@ -644,7 +691,8 @@ export default function Home() {
               onClick={() => setSelectedId(f.id)}
             >
               <span className="fund-dot" />
-              {f.name || "Untitled fund"}
+              <span className="fund-label">{f.name || "Untitled fund"}</span>
+              <span className="fund-count">{countContacts(f)}</span>
             </button>
           ))}
         </div>

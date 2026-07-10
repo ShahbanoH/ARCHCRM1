@@ -2,8 +2,9 @@
 
 A lightweight CRM for tracking outbound to **PE Funds → Platforms → Brands**.
 Every level has a company info bar (LinkedIn, Website, Location, Revenue) and its own
-contacts table (Name, LinkedIn, Email, Phone, Stage 1–5, Response), with Apollo CSV
-import and full CSV export. Everything auto-saves to Postgres, so you and your founder
+contacts table (Name, Role, LinkedIn, Email, Phone, Stage 1–5, Response), with Apollo CSV
+import and full CSV export. LinkedIn/website/email/phone values are clickable, and each
+fund in the sidebar shows its total contact count. Everything auto-saves to Postgres, so you and your founder
 see the same live data at the same URL.
 
 ## Deploy to Vercel (one-time setup)

@@ -99,6 +99,30 @@ body {
   flex-shrink: 0;
 }
 
+.fund-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fund-count {
+  flex-shrink: 0;
+  background: #223046;
+  color: #8a94a3;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.fund-item.active .fund-count {
+  background: var(--fund);
+  color: #eafffb;
+}
+
 .sidebar-foot {
   padding: 10px 12px;
   border-top: 1px solid #223046;
@@ -220,7 +244,7 @@ body {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 780px;
+  min-width: 900px;
 }
 
 th {
@@ -256,6 +280,46 @@ td input {
 
 td input:hover { background: #f6f8fa; }
 td input:focus { outline: none; border-color: var(--platform); background: #fff; }
+
+/* editable field with an "open link" affordance */
+.linkable {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.linkable input {
+  flex: 1;
+  min-width: 0;
+}
+
+.linkable .goto {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 5px;
+  border-radius: 5px;
+  background: inherit;
+}
+
+.linkable .goto:hover {
+  color: var(--platform);
+  background: var(--platform-soft);
+}
+
+.linkable input:not(:focus):not(:placeholder-shown) {
+  padding-right: 24px;
+}
+
+.info-field .linkable input {
+  padding-right: 26px;
+}
 
 td select {
   border: 1px solid transparent;
