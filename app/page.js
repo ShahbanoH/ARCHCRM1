@@ -1,0 +1,523 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+const KIND_LABEL = { fund: "PE Fund", platform: "Platform", brand: "Brand" };
+const CHILD_KIND = { fund: "platform", platform: "brand" };
+const RESPONSES = ["", "Yes", "No", "Follow up", "Wrong info"];
+
+/* ---------- CSV parsing (handles quoted fields with commas/newlines) ---------- */
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell);
+      cell = "";
+      if (row.some((c) => c.trim() !== "")) rows.push(row);
+      row = [];
+    } else {
+      cell += ch;
+    }
+  }
+  row.push(cell);
+  if (row.some((c) => c.trim() !== "")) rows.push(row);
+  return rows;
+}
+
+function mapApolloRows(rows) {
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (...names) => {
+    for (const n of names) {
+      const idx = headers.indexOf(n);
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  };
+  const first = col("first name");
+  const last = col("last name");
+  const full = col("name", "full name", "contact name");
+  const email = col("email", "email address", "work email");
+  const linkedin = col("person linkedin url", "linkedin url", "linkedin", "linkedin profile");
+  const phones = [
+    col("mobile phone"),
+    col("work direct phone"),
+    col("corporate phone"),
+    col("other phone"),
+    col("phone", "phone number"),
+  ].filter((i) => i !== -1);
+
+  return rows.slice(1).map((r) => {
+    const name =
+      full !== -1 && r[full]?.trim()
+        ? r[full].trim()
+        : [first !== -1 ? r[first] : "", last !== -1 ? r[last] : ""]
+            .map((s) => (s || "").trim())
+            .filter(Boolean)
+            .join(" ");
+    let phone = "";
+    for (const p of phones) {
+      if (r[p]?.trim()) {
+        phone = r[p].trim();
+        break;
+      }
+    }
+    return {
+      name,
+      linkedin: linkedin !== -1 ? (r[linkedin] || "").trim() : "",
+      email: email !== -1 ? (r[email] || "").trim() : "",
+      phone,
+      stage: 1,
+      response: "",
+    };
+  });
+}
+
+/* ---------- Immutable tree helpers ---------- */
+
+function mapNode(node, id, fn) {
+  if (node.id === id) return fn(node);
+  if (!node.children?.length) return node;
+  return { ...node, children: node.children.map((c) => mapNode(c, id, fn)) };
+}
+
+function mapTree(funds, id, fn) {
+  return funds.map((f) => mapNode(f, id, fn));
+}
+
+function dropNode(node, id) {
+  if (!node.children?.length) return node;
+  return {
+    ...node,
+    children: node.children.filter((c) => c.id !== id).map((c) => dropNode(c, id)),
+  };
+}
+
+/* ---------- Small pieces ---------- */
+
+function stageClass(stage) {
+  return `stage-${Math.min(5, Math.max(1, Number(stage) || 1))}`;
+}
+
+function respClass(response) {
+  switch (response) {
+    case "Yes": return "resp-yes";
+    case "No": return "resp-no";
+    case "Follow up": return "resp-follow";
+    case "Wrong info": return "resp-wrong";
+    default: return "resp-none";
+  }
+}
+
+function InfoBar({ entity, onEdit, onSave }) {
+  const fields = [
+    ["linkedin", "LinkedIn"],
+    ["website", "Website"],
+    ["location", "Location"],
+    ["revenue", "Revenue"],
+  ];
+  return (
+    <div className="info-bar">
+      {fields.map(([key, label]) => (
+        <div className="info-field" key={key}>
+          <label>{label}</label>
+          <input
+            value={entity[key] || ""}
+            placeholder={label}
+            onChange={(e) => onEdit({ [key]: e.target.value })}
+            onBlur={(e) => onSave({ [key]: e.target.value })}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContactsTable({ entity, api }) {
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const text = await file.text();
+    const contacts = mapApolloRows(parseCSV(text));
+    if (contacts.length === 0) {
+      alert("Couldn't find any contacts in that CSV — check that it has a header row.");
+      return;
+    }
+    api.importContacts(entity.id, contacts);
+  };
+
+  return (
+    <>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ width: "18%" }}>Name</th>
+              <th style={{ width: "20%" }}>LinkedIn</th>
+              <th style={{ width: "20%" }}>Email</th>
+              <th style={{ width: "14%" }}>Phone</th>
+              <th>Stage</th>
+              <th>Response</th>
+              <th style={{ width: 36 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {entity.contacts.length === 0 && (
+              <tr>
+                <td className="empty-row" colSpan={7}>
+                  No contacts yet — add one or upload an Apollo CSV.
+                </td>
+              </tr>
+            )}
+            {entity.contacts.map((c) => (
+              <tr key={c.id}>
+                {["name", "linkedin", "email", "phone"].map((key) => (
+                  <td key={key}>
+                    <input
+                      value={c[key] || ""}
+                      onChange={(e) => api.editContact(entity.id, c.id, { [key]: e.target.value })}
+                      onBlur={(e) => api.saveContact(c.id, { [key]: e.target.value })}
+                    />
+                  </td>
+                ))}
+                <td>
+                  <select
+                    className={stageClass(c.stage)}
+                    value={c.stage}
+                    onChange={(e) => {
+                      api.editContact(entity.id, c.id, { stage: Number(e.target.value) });
+                      api.saveContact(c.id, { stage: Number(e.target.value) });
+                    }}
+                  >
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <option key={n} value={n}>Stage {n}</option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    className={respClass(c.response)}
+                    value={c.response}
+                    onChange={(e) => {
+                      api.editContact(entity.id, c.id, { response: e.target.value });
+                      api.saveContact(c.id, { response: e.target.value });
+                    }}
+                  >
+                    {RESPONSES.map((r) => (
+                      <option key={r} value={r}>{r === "" ? "—" : r}</option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <button
+                    className="row-delete"
+                    title="Delete contact"
+                    onClick={() => api.deleteContact(entity.id, c.id)}
+                  >
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="btn-row">
+        <button className="btn" onClick={() => api.addContact(entity.id)}>+ Add contact</button>
+        <button className="btn" onClick={() => fileRef.current?.click()}>⬆ Upload Apollo CSV</button>
+        <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={handleFile} />
+      </div>
+    </>
+  );
+}
+
+function EntitySection({ entity, api }) {
+  const childKind = CHILD_KIND[entity.kind];
+  return (
+    <div className={`section ${entity.kind}`}>
+      <div className={`eyebrow ${entity.kind}`}>{KIND_LABEL[entity.kind]}</div>
+      <div className="section-head">
+        <input
+          className="entity-name"
+          value={entity.name}
+          placeholder={`${KIND_LABEL[entity.kind]} name`}
+          onChange={(e) => api.editEntity(entity.id, { name: e.target.value })}
+          onBlur={(e) => api.saveEntity(entity.id, { name: e.target.value })}
+        />
+        <button
+          className="delete-btn"
+          title={`Delete ${KIND_LABEL[entity.kind]}`}
+          onClick={() => api.deleteEntity(entity)}
+        >
+          ✕
+        </button>
+      </div>
+      <InfoBar
+        entity={entity}
+        onEdit={(fields) => api.editEntity(entity.id, fields)}
+        onSave={(fields) => api.saveEntity(entity.id, fields)}
+      />
+      <ContactsTable entity={entity} api={api} />
+      {childKind && (
+        <div className="children-block">
+          {entity.children.map((child) => (
+            <EntitySection key={child.id} entity={child} api={api} />
+          ))}
+          <button
+            className={`btn ${childKind === "platform" ? "platform-btn" : "brand-btn"}`}
+            onClick={() => api.addEntity(childKind, entity.id)}
+          >
+            + Add {KIND_LABEL[childKind].toLowerCase()}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Page ---------- */
+
+export default function Home() {
+  const [funds, setFunds] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [dbMessage, setDbMessage] = useState(null);
+  const [status, setStatus] = useState("");
+  const pending = useRef(0);
+
+  useEffect(() => {
+    fetch("/api/tree")
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          setDbMessage(data.message || "Something went wrong loading the data.");
+          return;
+        }
+        setFunds(data.funds);
+        if (data.funds.length > 0) setSelectedId(data.funds[0].id);
+      })
+      .catch(() => setDbMessage("Couldn't reach the server — try refreshing."));
+  }, []);
+
+  const track = async (promise) => {
+    pending.current++;
+    setStatus("saving");
+    try {
+      const res = await promise;
+      if (!res.ok) throw new Error("save failed");
+      return res;
+    } catch (err) {
+      setStatus("error");
+      throw err;
+    } finally {
+      pending.current--;
+      if (pending.current === 0) {
+        setStatus((s) => (s === "error" ? "error" : "saved"));
+        setTimeout(() => setStatus((s) => (s === "saved" ? "" : s)), 1500);
+      }
+    }
+  };
+
+  const api = {
+    editEntity: (id, fields) =>
+      setFunds((f) => mapTree(f, id, (n) => ({ ...n, ...fields }))),
+
+    saveEntity: (id, fields) =>
+      track(
+        fetch("/api/entities", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, ...fields }),
+        })
+      ).catch(() => {}),
+
+    addEntity: async (kind, parentId = null) => {
+      try {
+        const res = await track(
+          fetch("/api/entities", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind, parentId, name: `New ${KIND_LABEL[kind].toLowerCase()}` }),
+          })
+        );
+        const row = await res.json();
+        const node = { ...row, contacts: [], children: [] };
+        if (kind === "fund") {
+          setFunds((f) => [...f, node]);
+          setSelectedId(node.id);
+        } else {
+          setFunds((f) => mapTree(f, parentId, (n) => ({ ...n, children: [...n.children, node] })));
+        }
+      } catch {}
+    },
+
+    deleteEntity: async (entity) => {
+      const label = KIND_LABEL[entity.kind].toLowerCase();
+      if (!confirm(`Delete ${label} "${entity.name}" and everything inside it?`)) return;
+      try {
+        await track(fetch(`/api/entities?id=${entity.id}`, { method: "DELETE" }));
+        if (entity.kind === "fund") {
+          setFunds((f) => {
+            const next = f.filter((x) => x.id !== entity.id);
+            setSelectedId((sel) => (sel === entity.id ? next[0]?.id ?? null : sel));
+            return next;
+          });
+        } else {
+          setFunds((f) => f.map((fund) => dropNode(fund, entity.id)));
+        }
+      } catch {}
+    },
+
+    editContact: (entityId, contactId, fields) =>
+      setFunds((f) =>
+        mapTree(f, entityId, (n) => ({
+          ...n,
+          contacts: n.contacts.map((c) => (c.id === contactId ? { ...c, ...fields } : c)),
+        }))
+      ),
+
+    saveContact: (id, fields) =>
+      track(
+        fetch("/api/contacts", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, ...fields }),
+        })
+      ).catch(() => {}),
+
+    addContact: async (entityId) => {
+      try {
+        const res = await track(
+          fetch("/api/contacts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entityId, contacts: [{}] }),
+          })
+        );
+        const { contacts } = await res.json();
+        setFunds((f) =>
+          mapTree(f, entityId, (n) => ({ ...n, contacts: [...n.contacts, ...contacts] }))
+        );
+      } catch {}
+    },
+
+    importContacts: async (entityId, rows) => {
+      try {
+        const res = await track(
+          fetch("/api/contacts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entityId, contacts: rows }),
+          })
+        );
+        const { contacts } = await res.json();
+        setFunds((f) =>
+          mapTree(f, entityId, (n) => ({ ...n, contacts: [...n.contacts, ...contacts] }))
+        );
+      } catch {}
+    },
+
+    deleteContact: async (entityId, contactId) => {
+      try {
+        await track(fetch(`/api/contacts?id=${contactId}`, { method: "DELETE" }));
+        setFunds((f) =>
+          mapTree(f, entityId, (n) => ({
+            ...n,
+            contacts: n.contacts.filter((c) => c.id !== contactId),
+          }))
+        );
+      } catch {}
+    },
+  };
+
+  if (dbMessage) {
+    return (
+      <div className="center-note">
+        <h2>Not connected yet</h2>
+        <p>{dbMessage}</p>
+        <p style={{ marginTop: 10 }}>
+          Once the database exists, run <code>schema.sql</code> in the Neon SQL Editor, then
+          redeploy.
+        </p>
+      </div>
+    );
+  }
+
+  if (!funds) {
+    return <div className="center-note"><p>Loading…</p></div>;
+  }
+
+  const selected = funds.find((f) => f.id === selectedId) ?? null;
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="sidebar-head">
+          <h1>Arch CRM</h1>
+          <p>PE outbound tracker</p>
+        </div>
+        <div className="sidebar-list">
+          {funds.map((f) => (
+            <button
+              key={f.id}
+              className={`fund-item ${f.id === selectedId ? "active" : ""}`}
+              onClick={() => setSelectedId(f.id)}
+            >
+              <span className="fund-dot" />
+              {f.name || "Untitled fund"}
+            </button>
+          ))}
+        </div>
+        <div className="sidebar-foot">
+          <button className="btn primary" onClick={() => api.addEntity("fund")}>
+            + Add PE fund
+          </button>
+          <a className="btn" href="/api/export" style={{ justifyContent: "center", textDecoration: "none" }}>
+            ⬇ Export all (CSV)
+          </a>
+        </div>
+      </aside>
+
+      <main className="main">
+        {selected ? (
+          <EntitySection entity={selected} api={api} />
+        ) : (
+          <div className="center-note">
+            <h2>No funds yet</h2>
+            <p>Add your first PE fund from the sidebar to get started.</p>
+          </div>
+        )}
+      </main>
+
+      {status && (
+        <div className={`save-indicator ${status === "error" ? "error" : ""}`}>
+          {status === "saving" ? "Saving…" : status === "error" ? "Save failed — retry your edit" : "Saved ✓"}
+        </div>
+      )}
+    </div>
+  );
+}
