@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { formatRevenue } from "@/lib/match";
 
 const KIND_LABEL = { fund: "PE Fund", platform: "Platform", brand: "Brand" };
 const CHILD_KIND = { fund: "platform", platform: "brand" };
@@ -46,6 +47,11 @@ function parseCSV(text) {
   return rows;
 }
 
+// Apollo prefixes phone numbers with an apostrophe to force text format.
+function cleanPhone(value) {
+  return (value || "").replace(/^['’\s]+/, "").trim();
+}
+
 function mapApolloRows(rows) {
   if (rows.length < 2) return [];
   const headers = rows[0].map((h) => h.trim().toLowerCase());
@@ -79,8 +85,8 @@ function mapApolloRows(rows) {
             .join(" ");
     let phone = "";
     for (const p of phones) {
-      if (r[p]?.trim()) {
-        phone = r[p].trim();
+      if (cleanPhone(r[p])) {
+        phone = cleanPhone(r[p]);
         break;
       }
     }
@@ -123,6 +129,63 @@ function mapStructureRows(rows) {
     sponsor: pick(r, sponsor),
     platform: pick(r, platform),
   }));
+}
+
+// Figures out what kind of CSV was dropped from its headers.
+function detectCSVKind(headers) {
+  if (headers.includes("type")) return "structure";
+  if (headers.includes("first name") || headers.includes("person linkedin url")) return "people";
+  if (headers.includes("company name") || headers.includes("company")) return "companies";
+  return null;
+}
+
+// Builds the shared company shape from an Apollo row (works for both
+// people exports and account exports — same column names).
+function companyFromApollo(r, col) {
+  const city = col.pick(r, "company city");
+  const state = col.pick(r, "company state");
+  return {
+    name: col.pick(r, "company name", "company"),
+    website: col.pick(r, "website", "company website"),
+    linkedin: col.pick(r, "company linkedin url"),
+    location: [city, state].filter(Boolean).join(", "),
+    revenue: formatRevenue(col.pick(r, "annual revenue")),
+    subsidiary: col.pick(r, "subsidiary of"),
+  };
+}
+
+function makeColPicker(headers) {
+  return {
+    pick(r, ...names) {
+      for (const n of names) {
+        const idx = headers.indexOf(n);
+        if (idx !== -1 && (r[idx] || "").trim()) return r[idx].trim();
+      }
+      return "";
+    },
+  };
+}
+
+function mapApolloPeople(rows) {
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const col = makeColPicker(headers);
+  return rows.slice(1).map((r) => ({
+    name:
+      col.pick(r, "name", "full name") ||
+      [col.pick(r, "first name"), col.pick(r, "last name")].filter(Boolean).join(" "),
+    linkedin: col.pick(r, "person linkedin url", "linkedin url", "linkedin"),
+    email: col.pick(r, "email", "email address", "work email", "secondary email"),
+    phone: cleanPhone(
+      col.pick(r, "mobile phone", "work direct phone", "corporate phone", "other phone", "home phone", "phone")
+    ),
+    company: companyFromApollo(r, col),
+  }));
+}
+
+function mapApolloCompanies(rows) {
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const col = makeColPicker(headers);
+  return rows.slice(1).map((r) => companyFromApollo(r, col));
 }
 
 /* ---------- Immutable tree helpers ---------- */
@@ -477,30 +540,58 @@ export default function Home() {
       } catch {}
     },
 
-    importStructure: async (file) => {
+    importFile: async (file) => {
       const text = await file.text();
-      const rows = mapStructureRows(parseCSV(text));
-      if (!rows) {
-        alert(
-          "This CSV needs at least a name column (Record / Name / Company) and a Type column (PE firm / Platform / Brand)."
-        );
+      const parsed = parseCSV(text);
+      if (parsed.length < 2) {
+        alert("That CSV looks empty — it needs a header row plus data.");
         return;
       }
+      const headers = parsed[0].map((h) => h.trim().toLowerCase());
+      const csvKind = detectCSVKind(headers);
       try {
-        const res = await track(
-          fetch("/api/import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rows }),
-          })
-        );
-        const { created, updated, skipped } = await res.json();
-        await loadTree();
-        alert(
-          `Imported ${created.fund} funds, ${created.platform} platforms, ${created.brand} brands.` +
-            (updated ? ` Updated ${updated} existing.` : "") +
-            (skipped ? ` Skipped ${skipped} rows (missing name or type).` : "")
-        );
+        if (csvKind === "structure") {
+          const rows = mapStructureRows(parsed);
+          const res = await track(
+            fetch("/api/import", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ rows }),
+            })
+          );
+          const { created, updated, skipped } = await res.json();
+          await loadTree();
+          alert(
+            `Structure file: imported ${created.fund} funds, ${created.platform} platforms, ${created.brand} brands.` +
+              (updated ? ` Updated ${updated} existing.` : "") +
+              (skipped ? ` Skipped ${skipped} rows (missing name or type).` : "")
+          );
+        } else if (csvKind === "people" || csvKind === "companies") {
+          const rows = csvKind === "people" ? mapApolloPeople(parsed) : mapApolloCompanies(parsed);
+          const res = await track(
+            fetch("/api/smart-import", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ kind: csvKind, rows }),
+            })
+          );
+          const s = await res.json();
+          await loadTree();
+          const parts = [
+            csvKind === "people" ? "Contacts file:" : "Companies file:",
+            `matched ${s.companiesMatched} companies`,
+            s.companiesCreated ? `created ${s.companiesCreated} new` : "",
+            s.companiesUpdated ? `filled in info on ${s.companiesUpdated}` : "",
+            csvKind === "people" ? `added ${s.contactsAdded} contacts` : "",
+            s.contactsSkipped ? `skipped ${s.contactsSkipped} duplicates` : "",
+            s.rowsSkipped ? `skipped ${s.rowsSkipped} unusable rows` : "",
+          ].filter(Boolean);
+          alert(parts.join(", ") + ".");
+        } else {
+          alert(
+            "Couldn't recognize this CSV. Supported: a structure file (Type/Sponsor/Platform columns), an Apollo people export, or an Apollo accounts export."
+          );
+        }
       } catch {
         alert("Import failed — check the file and try again.");
       }
@@ -562,7 +653,7 @@ export default function Home() {
             + Add PE fund
           </button>
           <button className="btn" onClick={() => structureFileRef.current?.click()}>
-            ⬆ Import structure CSV
+            ⬆ Import any CSV
           </button>
           <input
             ref={structureFileRef}
@@ -572,7 +663,7 @@ export default function Home() {
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
-              if (file) api.importStructure(file);
+              if (file) api.importFile(file);
             }}
           />
           <a className="btn" href="/api/export" style={{ justifyContent: "center", textDecoration: "none" }}>

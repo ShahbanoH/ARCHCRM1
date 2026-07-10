@@ -21,10 +21,17 @@ of crashing — that's expected.
 
 ## Using it
 
-- **Import structure CSV** (sidebar) bulk-builds the whole tree from a master file with
-  `Record` (name), `Type` (PE firm / Platform / Brand), `LinkedIn`, `Domains`, `Sponsor`
-  (a platform's PE firm), and `Platform` (a brand's platform) columns. Re-importing the
-  same file is safe — existing companies are matched by name, never duplicated
+- **Import any CSV** (sidebar) auto-detects what you dropped:
+  - a **structure file** (`Record`, `Type` = PE firm / Platform / Brand, `Sponsor`,
+    `Platform` columns) builds the whole tree
+  - an **Apollo accounts export** matches each company to the tree by website domain or
+    name (fuzzy — "Bee's Plumbing" finds "Bees Plumbing"), fills in blank LinkedIn /
+    website / location / revenue, and creates unmatched companies under the parent from
+    their "Subsidiary of" column (or an "Unassigned" bucket if unknown)
+  - an **Apollo people export** matches each contact's company the same way and adds the
+    contact to that fund/platform/brand, skipping duplicates by email/LinkedIn/name
+
+  Re-importing any file is safe — nothing gets duplicated
 - **Add PE fund** (sidebar) → click a fund to open it
 - **+ Add platform** inside a fund, **+ Add brand** inside a platform
 - Click any name or field to edit — changes save automatically (indicator bottom-right)
